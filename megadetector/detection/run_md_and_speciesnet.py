@@ -476,6 +476,7 @@ def _crop_producer_func(image_queue: JoinableQueue,
         # Periodic garbage collection
         image_count += 1
         if gc_interval > 0 and image_count % gc_interval == 0:
+            import gc
             gc.collect()
             if verbose:
                 print('Producer {}: GC at {} images'.format(producer_id, image_count))
