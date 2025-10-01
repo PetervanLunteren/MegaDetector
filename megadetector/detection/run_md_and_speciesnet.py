@@ -10,6 +10,7 @@ Runs MD first, then runs SpeciesNet on every above-threshold crop.
 #%% Constants, imports, environment
 
 import argparse
+import gc
 import json
 import multiprocessing
 import os
@@ -359,13 +360,13 @@ def _process_video_detections(file_path: str,
                                  failure_metadata))
 
             # ...try/except
+
+        # ...for each detection
         
-        # Fix memory leak: cleanup frame image
+        # Fix memory leak: cleanup frame image (at end of frame_callback)
         if 'frame_image' in locals() and hasattr(frame_image, 'close'):
             frame_image.close()
             del frame_image
-
-        # ...for each detection
 
     # ...def frame_callback(...)
 
@@ -984,9 +985,15 @@ def _run_classification_step(detector_results_file: str,
     # This will block every time the queue reaches its maximum depth, so for
     # very small jobs, this will not be a useful progress bar.
     with tqdm(total=len(images),desc='Classification') as pbar:
-        for image_data in images:
+        for i, image_data in enumerate(images):
             image_queue.put(image_data)
             pbar.update()
+            
+            # Periodic garbage collection in main process
+            if gc_interval > 0 and (i + 1) % gc_interval == 0:
+                gc.collect()
+                if verbose:
+                    print('Main process: GC at {} images'.format(i + 1))
 
     # Send sentinel signals to producers
     for _ in range(classifier_worker_threads):
