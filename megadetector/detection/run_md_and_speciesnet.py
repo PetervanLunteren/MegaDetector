@@ -10,6 +10,7 @@ Runs MD first, then runs SpeciesNet on every above-threshold crop.
 #%% Constants, imports, environment
 
 import argparse
+import gc
 import json
 import multiprocessing
 import os
@@ -227,6 +228,11 @@ def _process_image_detections(file_path: str,
                              failure_metadata))
 
     # ...for each detection in this image
+    
+    # Fix memory leak: explicitly close the image
+    if 'image' in locals() and hasattr(image, 'close'):
+        image.close()
+        del image
 
 # ...def _process_image_detections(...)
 
@@ -353,6 +359,11 @@ def _process_video_detections(file_path: str,
                                  failure_metadata))
 
             # ...try/except
+        
+        # Fix memory leak: cleanup frame image
+        if 'frame_image' in locals() and hasattr(frame_image, 'close'):
+            frame_image.close()
+            del frame_image
 
         # ...for each detection
 
@@ -469,6 +480,11 @@ def _crop_producer_func(image_queue: JoinableQueue,
             )
 
         image_queue.task_done()
+        
+        # Periodic garbage collection to prevent memory buildup
+        import random
+        if random.random() < 0.01:  # 1% chance
+            gc.collect()
 
     # ...while(we still have items to process)
 
@@ -964,6 +980,10 @@ def _run_classification_step(detector_results_file: str,
         for image_data in images:
             image_queue.put(image_data)
             pbar.update()
+            
+            # Periodic garbage collection
+            if pbar.n % 100 == 0:
+                gc.collect()
 
     # Send sentinel signals to producers
     for _ in range(classifier_worker_threads):
@@ -1122,6 +1142,9 @@ def _run_classification_step(detector_results_file: str,
 
     if verbose:
         print('Classification results written to {}'.format(merged_results_file))
+    
+    # Final garbage collection
+    gc.collect()
 
 # ...def _run_classification_step(...)
 
