@@ -989,8 +989,8 @@ def _run_classification_step(detector_results_file: str,
             image_queue.put(image_data)
             pbar.update()
             
-            # Periodic garbage collection in main process
-            if gc_interval > 0 and (i + 1) % gc_interval == 0:
+            # Periodic garbage collection in main process (more frequent than producers)
+            if (i + 1) % 100 == 0:
                 gc.collect()
                 if verbose:
                     print('Main process: GC at {} images'.format(i + 1))
