@@ -64,7 +64,8 @@ DEFAULT_CLASSIFIER_BATCH_SIZE = 8
 DEFAULT_LOADER_WORKERS = 4
 MAX_QUEUE_SIZE_IMAGES_PER_WORKER = 10
 DEAFULT_SECONDS_PER_VIDEO_FRAME = 1.0
-DEFAULT_GC_INTERVAL = 1000  # Run garbage collection every N images
+DEFAULT_PRODUCER_GC_INTERVAL = 1000  # Run garbage collection every N images in producer workers
+DEFAULT_MAIN_GC_INTERVAL = 500  # Run garbage collection every N images in main process
 
 # Max number of classification scores to include per detection
 DEFAULT_TOP_N_SCORES = 2
@@ -403,7 +404,7 @@ def _crop_producer_func(image_queue: JoinableQueue,
                         detection_confidence_threshold: float,
                         source_folder: str,
                         producer_id: int = -1,
-                        gc_interval: int = DEFAULT_GC_INTERVAL):
+                        producer_gc_interval: int = DEFAULT_PRODUCER_GC_INTERVAL):
     """
     Producer function for classification workers.
 
@@ -486,7 +487,7 @@ def _crop_producer_func(image_queue: JoinableQueue,
         
         # Periodic garbage collection
         image_count += 1
-        if gc_interval > 0 and image_count % gc_interval == 0:
+        if producer_gc_interval > 0 and image_count % producer_gc_interval == 0:
             import gc
             gc.collect()
             if verbose:
@@ -919,7 +920,8 @@ def _run_classification_step(detector_results_file: str,
                              country: str = None,
                              admin1_region: str = None,
                              top_n_scores: int = DEFAULT_TOP_N_SCORES,
-                             gc_interval: int = DEFAULT_GC_INTERVAL):
+                             producer_gc_interval: int = DEFAULT_PRODUCER_GC_INTERVAL,
+                             main_gc_interval: int = DEFAULT_MAIN_GC_INTERVAL):
     """
     Run SpeciesNet classification on detections from MegaDetector results.
 
@@ -971,7 +973,7 @@ def _run_classification_step(detector_results_file: str,
         p = Process(target=_crop_producer_func,
                     args=(image_queue, batch_queue, classifier_model,
                           detection_confidence_threshold, source_folder, i_worker,
-                          gc_interval))
+                          producer_gc_interval))
         p.start()
         producers.append(p)
 
@@ -989,8 +991,8 @@ def _run_classification_step(detector_results_file: str,
             image_queue.put(image_data)
             pbar.update()
             
-            # Periodic garbage collection in main process (more frequent than producers)
-            if (i + 1) % 100 == 0:
+            # Periodic garbage collection in main process
+            if main_gc_interval > 0 and (i + 1) % main_gc_interval == 0:
                 gc.collect()
                 if verbose:
                     print('Main process: GC at {} images'.format(i + 1))
@@ -1240,10 +1242,14 @@ def main():
                         help='Sample frames every N seconds from videos (default {})'.\
                             format(DEAFULT_SECONDS_PER_VIDEO_FRAME) + \
                             ' (mutually exclusive with --frame_sample)')
-    parser.add_argument('--gc_interval',
+    parser.add_argument('--producer_gc_interval',
                         type=int,
-                        default=DEFAULT_GC_INTERVAL,
-                        help='Run garbage collection every N images (0 to disable)')
+                        default=DEFAULT_PRODUCER_GC_INTERVAL,
+                        help='Run garbage collection every N images in producer workers (0 to disable)')
+    parser.add_argument('--main_gc_interval',
+                        type=int,
+                        default=DEFAULT_MAIN_GC_INTERVAL,
+                        help='Run garbage collection every N images in main process (0 to disable)')
     parser.add_argument('--verbose',
                         action='store_true',
                         help='Enable additional debug output')
@@ -1329,7 +1335,8 @@ def main():
         enable_rollup=(not args.norollup),
         country=args.country,
         admin1_region=args.admin1_region,
-        gc_interval=args.gc_interval
+        producer_gc_interval=args.producer_gc_interval,
+        main_gc_interval=args.main_gc_interval
     )
 
     elapsed_time = time.time() - start_time
