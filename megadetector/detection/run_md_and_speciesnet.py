@@ -63,6 +63,7 @@ DEFAULT_CLASSIFIER_BATCH_SIZE = 8
 DEFAULT_LOADER_WORKERS = 4
 MAX_QUEUE_SIZE_IMAGES_PER_WORKER = 10
 DEAFULT_SECONDS_PER_VIDEO_FRAME = 1.0
+DEFAULT_GC_INTERVAL = 1000  # Run garbage collection every N images
 
 # Max number of classification scores to include per detection
 DEFAULT_TOP_N_SCORES = 2
@@ -227,11 +228,6 @@ def _process_image_detections(file_path: str,
                              failure_metadata))
 
     # ...for each detection in this image
-    
-    # Fix memory leak: explicitly close the image
-    if 'image' in locals() and hasattr(image, 'close'):
-        image.close()
-        del image
 
 # ...def _process_image_detections(...)
 
@@ -358,11 +354,6 @@ def _process_video_detections(file_path: str,
                                  failure_metadata))
 
             # ...try/except
-        
-        # Fix memory leak: cleanup frame image
-        if 'frame_image' in locals() and hasattr(frame_image, 'close'):
-            frame_image.close()
-            del frame_image
 
         # ...for each detection
 
@@ -400,7 +391,8 @@ def _crop_producer_func(image_queue: JoinableQueue,
                         classifier_model: str,
                         detection_confidence_threshold: float,
                         source_folder: str,
-                        producer_id: int = -1):
+                        producer_id: int = -1,
+                        gc_interval: int = DEFAULT_GC_INTERVAL):
     """
     Producer function for classification workers.
 
@@ -430,6 +422,7 @@ def _crop_producer_func(image_queue: JoinableQueue,
     if verbose:
         print('Classification producer {}: loaded classifier'.format(producer_id))
 
+    image_count = 0
     while True:
 
         # Pull an image of detection results from the queue
@@ -479,6 +472,13 @@ def _crop_producer_func(image_queue: JoinableQueue,
             )
 
         image_queue.task_done()
+        
+        # Periodic garbage collection
+        image_count += 1
+        if gc_interval > 0 and image_count % gc_interval == 0:
+            gc.collect()
+            if verbose:
+                print('Producer {}: GC at {} images'.format(producer_id, image_count))
 
     # ...while(we still have items to process)
 
@@ -906,7 +906,8 @@ def _run_classification_step(detector_results_file: str,
                              enable_rollup: bool = True,
                              country: str = None,
                              admin1_region: str = None,
-                             top_n_scores: int = DEFAULT_TOP_N_SCORES):
+                             top_n_scores: int = DEFAULT_TOP_N_SCORES,
+                             gc_interval: int = DEFAULT_GC_INTERVAL):
     """
     Run SpeciesNet classification on detections from MegaDetector results.
 
@@ -957,7 +958,8 @@ def _run_classification_step(detector_results_file: str,
     for i_worker in range(classifier_worker_threads):
         p = Process(target=_crop_producer_func,
                     args=(image_queue, batch_queue, classifier_model,
-                          detection_confidence_threshold, source_folder, i_worker))
+                          detection_confidence_threshold, source_folder, i_worker,
+                          gc_interval))
         p.start()
         producers.append(p)
 
@@ -1220,6 +1222,10 @@ def main():
                         help='Sample frames every N seconds from videos (default {})'.\
                             format(DEAFULT_SECONDS_PER_VIDEO_FRAME) + \
                             ' (mutually exclusive with --frame_sample)')
+    parser.add_argument('--gc_interval',
+                        type=int,
+                        default=DEFAULT_GC_INTERVAL,
+                        help='Run garbage collection every N images (0 to disable)')
     parser.add_argument('--verbose',
                         action='store_true',
                         help='Enable additional debug output')
@@ -1305,6 +1311,7 @@ def main():
         enable_rollup=(not args.norollup),
         country=args.country,
         admin1_region=args.admin1_region,
+        gc_interval=args.gc_interval
     )
 
     elapsed_time = time.time() - start_time
