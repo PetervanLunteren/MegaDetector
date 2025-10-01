@@ -228,6 +228,11 @@ def _process_image_detections(file_path: str,
                              failure_metadata))
 
     # ...for each detection in this image
+    
+    # Fix memory leak: explicitly close the image
+    if 'image' in locals() and hasattr(image, 'close'):
+        image.close()
+        del image
 
 # ...def _process_image_detections(...)
 
@@ -354,6 +359,11 @@ def _process_video_detections(file_path: str,
                                  failure_metadata))
 
             # ...try/except
+        
+        # Fix memory leak: cleanup frame image
+        if 'frame_image' in locals() and hasattr(frame_image, 'close'):
+            frame_image.close()
+            del frame_image
 
         # ...for each detection
 
